@@ -7,6 +7,12 @@ import { formsRouter } from "./routes/forms.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { isAIConfigured } from "./services/ai.js";
 
+try {
+  process.loadEnvFile();
+} catch {
+  // no .env file present — fine, env vars may be supplied another way
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -33,9 +39,10 @@ app.use(errorHandler);
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, "0.0.0.0", () => {
   console.log(`Snap2Form AI server listening on port ${port}`);
+  console.log(`AI configured: ${isAIConfigured()}`);
   if (!isAIConfigured()) {
     console.warn(
-      "No AI provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY to enable live document analysis (Demo Mode still works)."
+      "No AI provider configured. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY to enable live document analysis (Demo Mode still works)."
     );
   }
 });

@@ -10,7 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
  * produced it. Swapping providers means editing only this file.
  */
 
-const REQUEST_TIMEOUT_MS = 25_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 
 export type AIErrorCode = "AI_UNAVAILABLE" | "AI_TIMEOUT" | "INVALID_AI_RESPONSE";
 
@@ -152,21 +152,78 @@ class AnthropicProvider implements Provider {
   }
 }
 
+interface GeminiPart {
+  text?: string;
+}
+interface GeminiResponse {
+  candidates?: { content?: { parts?: GeminiPart[] } }[];
+}
+
+class GeminiProvider implements Provider {
+  name = "gemini";
+  private apiKey: string;
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+  async analyze(imageBase64: string, mimeType: string, signal: AbortSignal): Promise<string> {
+    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: USER_PROMPT }, { inlineData: { mimeType, data: imageBase64 } }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 0 }
+          }
+        }),
+        signal
+      }
+    );
+
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 300);
+      throw new AIError("AI_UNAVAILABLE", `Gemini API error ${response.status}: ${body}`);
+    }
+
+    const data = (await response.json()) as GeminiResponse;
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    if (!text) throw new AIError("INVALID_AI_RESPONSE", "AI response contained no content");
+    return text;
+  }
+}
+
 function getProvider(): Provider {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
+  if (geminiKey) return new GeminiProvider(geminiKey);
   if (openaiKey) return new OpenAIProvider(openaiKey);
   if (anthropicKey) return new AnthropicProvider(anthropicKey);
 
   throw new AIError(
     "AI_UNAVAILABLE",
-    "No AI provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment to enable live document analysis. Try Demo Mode in the meantime."
+    "No AI provider configured. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in your environment to enable live document analysis. Try Demo Mode in the meantime."
   );
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY);
+  return Boolean(
+    process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY
+  );
 }
 
 /**
